@@ -12,10 +12,15 @@ from keras.layers import Activation
 from keras.layers import BatchNormalization as BatchNorm
 from keras.utils import np_utils
 from keras.callbacks import ModelCheckpoint
+from music21.exceptions21 import StreamException
+
 
 def train_network():
     """ Train a Neural Network to generate music """
-    notes = get_notes()
+    # notes = get_notes()
+
+    with open('data/notes', 'rb') as filepath:
+        notes = pickle.load(filepath)
 
     # get amount of pitch names
     n_vocab = len(set(notes))
@@ -26,22 +31,30 @@ def train_network():
 
     train(model, network_input, network_output)
 
+
 def get_notes():
     """ Get all the notes and chords from the midi files in the ./midi_songs directory """
     notes = []
 
     for file in glob.glob("midi_songs/*.mid"):
-        midi = converter.parse(file)
-
         print("Parsing %s" % file)
 
-        notes_to_parse = None
+        midi = None
 
-        try: # file has instrument parts
+        try:
+            midi = converter.parse(file)
+        except StreamException as ex:
+            print(f'Unexpected {ex}')
+
+        notes_to_parse = []
+
+        try:  # file has instrument parts
             s2 = instrument.partitionByInstrument(midi)
-            notes_to_parse = s2.parts[0].recurse() 
-        except: # file has notes in a flat structure
-            notes_to_parse = midi.flat.notes
+            notes_to_parse = s2.parts[0].recurse()
+        except Exception as ex:  # file has notes in a flat structure
+            print(f'Unexpected {ex}')
+            if midi is not None:
+                notes_to_parse = midi.flat.notes
 
         for element in notes_to_parse:
             if isinstance(element, note.Note):
@@ -54,14 +67,15 @@ def get_notes():
 
     return notes
 
+
 def prepare_sequences(notes, n_vocab):
     """ Prepare the sequences used by the Neural Network """
-    sequence_length = 100
+    sequence_length = 50
 
     # get all pitch names
     pitchnames = sorted(set(item for item in notes))
 
-     # create a dictionary to map pitches to integers
+    # create a dictionary to map pitches to integers
     note_to_int = dict((note, number) for number, note in enumerate(pitchnames))
 
     network_input = []
@@ -83,7 +97,8 @@ def prepare_sequences(notes, n_vocab):
 
     network_output = np_utils.to_categorical(network_output)
 
-    return (network_input, network_output)
+    return network_input, network_output
+
 
 def create_network(network_input, n_vocab):
     """ create the structure of the neural network """
@@ -94,7 +109,7 @@ def create_network(network_input, n_vocab):
         recurrent_dropout=0.3,
         return_sequences=True
     ))
-    model.add(LSTM(512, return_sequences=True, recurrent_dropout=0.3,))
+    model.add(LSTM(512, return_sequences=True, recurrent_dropout=0.3, ))
     model.add(LSTM(512))
     model.add(BatchNorm())
     model.add(Dropout(0.3))
@@ -108,19 +123,21 @@ def create_network(network_input, n_vocab):
 
     return model
 
+
 def train(model, network_input, network_output):
     """ train the neural network """
     filepath = "weights-improvement-{epoch:02d}-{loss:.4f}-bigger.hdf5"
     checkpoint = ModelCheckpoint(
         filepath,
         monitor='loss',
-        verbose=0,
+        verbose=1,
         save_best_only=True,
         mode='min'
     )
     callbacks_list = [checkpoint]
 
-    model.fit(network_input, network_output, epochs=200, batch_size=128, callbacks=callbacks_list)
+    model.fit(network_input, network_output, epochs=200, batch_size=64, callbacks=callbacks_list)
+
 
 if __name__ == '__main__':
     train_network()
